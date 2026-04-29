@@ -40,7 +40,7 @@ namespace cAlgo.Robots
         [Parameter("Enable NRB Color Change", Group = "Strategies", DefaultValue = true)]
         public bool EnableNRBColorChange { get; set; }
 
-        [Parameter("Enable M/W Pullback", Group = "Strategies", DefaultValue = true)]
+        [Parameter("Enable M/W Pullback", Group = "Strategies", DefaultValue = false)]
         public bool EnableMWPullback { get; set; }
 
         [Parameter("Enable Back to M8s", Group = "Strategies", DefaultValue = false)]
@@ -107,6 +107,7 @@ namespace cAlgo.Robots
         private MarketStateDetector _stateDetector;
         private RiskManager _riskManager;
         private TradeManager _tradeManager;
+        private TradeAnalytics _analytics;
         private List<IStrategy> _strategies;
         private Bars _entryBars;
         private Bars _confBars;
@@ -124,7 +125,10 @@ namespace cAlgo.Robots
             _riskManager = new RiskManager(Symbol, SizingModeParam, FixedLotSize,
                 RiskPercentage, CustomWinBoxPips, EmergencyStopMultiplier);
 
+            _analytics = new TradeAnalytics(this);
+
             _tradeManager = new TradeManager(this, _riskManager, BreakevenBufferPips, TargetPushCount);
+            _tradeManager.SetAnalytics(_analytics);
 
             _strategies = new List<IStrategy>();
 
@@ -142,8 +146,9 @@ namespace cAlgo.Robots
 
             _entryBars.BarOpened += OnEntryBarOpened;
 
-            Print("[ITFX] Bot started | WinBox: {0} pips | Strategies: {1}",
-                _riskManager.WinBoxPips,
+            Print("[ITFX] Bot started | WinBox: {0} pips | Session: {1}-{2} UTC | MaxHold: {3}h",
+                _riskManager.WinBoxPips, TradingStartHour, TradingEndHour, MaxHoldHours);
+            Print("[ITFX] Strategies: {0}",
                 string.Join(", ", _strategies.Where(s => s.IsEnabled).Select(s => s.Name)));
         }
 
@@ -172,9 +177,7 @@ namespace cAlgo.Robots
             _tradeManager.CleanupClosedPositions();
 
             var snap = BuildSnapshot();
-
-            Print("[ITFX] Bar | State: {0} | SMA20: {1:F5} | SMA200: {2:F5} | ATR: {3:F5}",
-                snap.MarketState, snap.Sma20, snap.Sma200, snap.Atr);
+            _analytics.RecordBarState(snap.MarketState);
 
             _tradeManager.ManageOpenPositions(snap.PreviousClose, snap.PreviousHigh, snap.PreviousLow);
 
@@ -195,7 +198,10 @@ namespace cAlgo.Robots
             }
 
             if (!IsWithinTradingSession())
+            {
+                _analytics.RecordSignalSkipped("session");
                 return;
+            }
 
             bool enteredThisBar = false;
 
@@ -213,25 +219,35 @@ namespace cAlgo.Robots
                         break;
                     }
                 }
-                if (!validState) continue;
+                if (!validState)
+                {
+                    _analytics.RecordSignalSkipped("state");
+                    continue;
+                }
 
                 var signal = strategy.Evaluate(snap);
                 if (!signal.HasSignal) continue;
 
+                _analytics.RecordSignalGenerated();
+
                 if (strategy.Name == "SCC M8")
                 {
-                    // Strategy 2 allows pyramiding — skip the "one entry per bar" rule check
                 }
                 else
                 {
                     int existingForStrategy = _tradeManager.GetPositionCountByLabel(signal.Label);
-                    if (existingForStrategy > 0) continue;
+                    if (existingForStrategy > 0)
+                    {
+                        _analytics.RecordSignalSkipped("existing");
+                        continue;
+                    }
                 }
 
                 double volume = _riskManager.CalculateVolumeInUnits(Account.Balance);
 
-                Print("[ITFX] SIGNAL: {0} {1} from {2}", signal.Direction, SymbolName, signal.StrategyName);
-                _tradeManager.ExecuteTrade(signal, volume);
+                Print("[ITFX] SIGNAL: {0} {1} from {2} | State: {3} | ATR: {4:F2}",
+                    signal.Direction, SymbolName, signal.StrategyName, snap.MarketState, snap.Atr);
+                _tradeManager.ExecuteTrade(signal, volume, snap.MarketState, snap.Atr, snap.Sma20Slope);
                 enteredThisBar = true;
             }
         }
@@ -302,6 +318,7 @@ namespace cAlgo.Robots
         protected override void OnStop()
         {
             _entryBars.BarOpened -= OnEntryBarOpened;
+            _analytics.PrintFullReport();
             Print("[ITFX] Bot stopped");
         }
     }

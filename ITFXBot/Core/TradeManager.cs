@@ -25,6 +25,7 @@ namespace cAlgo.Robots
         private readonly double _breakevenBufferPips;
         private readonly int _targetPushCount;
         private readonly Dictionary<int, PositionMeta> _positionMetas = new Dictionary<int, PositionMeta>();
+        private TradeAnalytics _analytics;
 
         public TradeManager(Robot robot, RiskManager riskManager, double breakevenBufferPips, int targetPushCount)
         {
@@ -34,11 +35,12 @@ namespace cAlgo.Robots
             _targetPushCount = targetPushCount;
         }
 
-        public void ExecuteTrade(StrategySignal signal, double volume)
+        public void SetAnalytics(TradeAnalytics analytics) { _analytics = analytics; }
+
+        public void ExecuteTrade(StrategySignal signal, double volume, MarketStateType state, double atr, double slope)
         {
             var tradeType = signal.Direction == TradeDirection.Buy ? TradeType.Buy : TradeType.Sell;
             double emergencyStopPips = _riskManager.GetEmergencyStopPips();
-
             double takeProfitPips = _riskManager.GetTakeProfitPips();
 
             var result = _robot.ExecuteMarketOrder(tradeType, _robot.SymbolName, volume, signal.Label, emergencyStopPips, takeProfitPips);
@@ -57,9 +59,16 @@ namespace cAlgo.Robots
                     InPullback = false,
                     StrategyLabel = signal.Label
                 };
-                _robot.Print("[ITFX] Opened {0} {1} at {2} | Lifeline: {3} | Label: {4}",
+
+                _analytics?.RecordTradeOpen(pos.Id, signal.Label,
+                    signal.Direction == TradeDirection.Buy ? "buy" : "sell",
+                    pos.EntryPrice, _robot.Server.TimeInUtc, state, atr, slope);
+
+                _robot.Print("[ITFX] OPEN {0} {1} at {2:F2} | SL:{3:F2} TP:{4:F2} | Lifeline:{5:F2} | {6} | State:{7}",
                     signal.Direction, _robot.SymbolName, pos.EntryPrice,
-                    _positionMetas[pos.Id].LifelinePrice, signal.Label);
+                    pos.EntryPrice + (signal.Direction == TradeDirection.Buy ? -1 : 1) * emergencyStopPips * _robot.Symbol.PipSize,
+                    pos.EntryPrice + (signal.Direction == TradeDirection.Buy ? 1 : -1) * takeProfitPips * _robot.Symbol.PipSize,
+                    _positionMetas[pos.Id].LifelinePrice, signal.Label, state);
             }
         }
 
@@ -73,6 +82,8 @@ namespace cAlgo.Robots
                     continue;
 
                 var meta = _positionMetas[pos.Id];
+
+                _analytics?.UpdateExcursions(pos.Id, barClose);
 
                 if (CheckLifelineExit(pos, meta, barClose))
                 {
@@ -90,8 +101,8 @@ namespace cAlgo.Robots
                         : (meta.EntryPrice - barClose) / _robot.Symbol.PipSize;
                     if (profitPips >= _riskManager.WinBoxPips)
                     {
-                        _robot.Print("[ITFX] Closing {0} after {1} pushes at {2:F0} pips profit", pos.Id, meta.PushCount, profitPips);
-                        _robot.ClosePosition(pos);
+                        _robot.Print("[ITFX] CLOSE {0} push-exit | {1} pushes | {2:F0} pips", pos.Id, meta.PushCount, profitPips);
+                        RecordAndClose(pos, meta, barClose, ExitReason.PushCount);
                         closedIds.Add(pos.Id);
                         continue;
                     }
@@ -115,9 +126,8 @@ namespace cAlgo.Robots
 
             if (shouldClose)
             {
-                _robot.Print("[ITFX] Lifeline exit: {0} closed at bar close {1} past lifeline {2}",
-                    pos.Id, barClose, meta.LifelinePrice);
-                _robot.ClosePosition(pos);
+                _robot.Print("[ITFX] CLOSE {0} lifeline | bar={1:F2} past lifeline={2:F2}", pos.Id, barClose, meta.LifelinePrice);
+                RecordAndClose(pos, meta, barClose, ExitReason.Lifeline);
                 return true;
             }
 
@@ -147,7 +157,7 @@ namespace cAlgo.Robots
 
                 _robot.ModifyPosition(pos, newStop, pos.TakeProfit, false);
                 meta.BreakevenMoved = true;
-                _robot.Print("[ITFX] Breakeven set for position {0} at {1}", pos.Id, newStop);
+                _robot.Print("[ITFX] BE set {0} at {1:F2}", pos.Id, newStop);
             }
         }
 
@@ -164,7 +174,6 @@ namespace cAlgo.Robots
                 {
                     meta.PushCount++;
                     meta.InPullback = true;
-                    _robot.Print("[ITFX] Push #{0} detected for position {1}", meta.PushCount, pos.Id);
                 }
             }
             else
@@ -178,7 +187,6 @@ namespace cAlgo.Robots
                 {
                     meta.PushCount++;
                     meta.InPullback = true;
-                    _robot.Print("[ITFX] Push #{0} detected for position {1}", meta.PushCount, pos.Id);
                 }
             }
         }
@@ -217,17 +225,23 @@ namespace cAlgo.Robots
             var activeIds = new HashSet<int>(_robot.Positions.Select(p => p.Id));
             var staleIds = _positionMetas.Keys.Where(id => !activeIds.Contains(id)).ToList();
             foreach (var id in staleIds)
+            {
+                if (_analytics != null && _analytics != null)
+                    _analytics.RecordServerClose(id, 0, 0, _robot.Server.TimeInUtc);
                 _positionMetas.Remove(id);
+            }
         }
 
         public void CloseExpiredPositions(DateTime utcNow, int maxHoldHours)
         {
             foreach (var pos in _robot.Positions.Where(p => p.SymbolName == _robot.SymbolName).ToList())
             {
+                if (!_positionMetas.ContainsKey(pos.Id)) continue;
                 if ((utcNow - pos.EntryTime).TotalHours >= maxHoldHours)
                 {
-                    _robot.Print("[ITFX] Closing {0} — exceeded max hold of {1}h", pos.Id, maxHoldHours);
-                    _robot.ClosePosition(pos);
+                    var meta = _positionMetas[pos.Id];
+                    _robot.Print("[ITFX] CLOSE {0} max-hold {1}h", pos.Id, maxHoldHours);
+                    RecordAndClose(pos, meta, _robot.Symbol.Bid, ExitReason.MaxHoldTime);
                     _positionMetas.Remove(pos.Id);
                 }
             }
@@ -237,9 +251,17 @@ namespace cAlgo.Robots
         {
             foreach (var pos in _robot.Positions.Where(p => p.SymbolName == _robot.SymbolName).ToList())
             {
-                _robot.Print("[ITFX] Weekend close: closing position {0}", pos.Id);
-                _robot.ClosePosition(pos);
-                _positionMetas.Remove(pos.Id);
+                if (_positionMetas.ContainsKey(pos.Id))
+                {
+                    var meta = _positionMetas[pos.Id];
+                    _robot.Print("[ITFX] CLOSE {0} weekend", pos.Id);
+                    RecordAndClose(pos, meta, _robot.Symbol.Bid, ExitReason.WeekendClose);
+                    _positionMetas.Remove(pos.Id);
+                }
+                else
+                {
+                    _robot.ClosePosition(pos);
+                }
             }
         }
 
@@ -256,14 +278,27 @@ namespace cAlgo.Robots
             foreach (var pos in s5Positions)
             {
                 bool breakout = barClose > rangeTop + winBoxDistance || barClose < rangeBottom - winBoxDistance;
-                if (breakout)
+                if (breakout && _positionMetas.ContainsKey(pos.Id))
                 {
-                    _robot.Print("[ITFX] Breakout guard: closing S5 position {0}", pos.Id);
-                    _robot.ClosePosition(pos);
-                    if (_positionMetas.ContainsKey(pos.Id))
-                        _positionMetas.Remove(pos.Id);
+                    var meta = _positionMetas[pos.Id];
+                    _robot.Print("[ITFX] CLOSE {0} breakout-guard", pos.Id);
+                    RecordAndClose(pos, meta, barClose, ExitReason.BreakoutGuard);
+                    _positionMetas.Remove(pos.Id);
                 }
             }
+        }
+
+        private void RecordAndClose(Position pos, PositionMeta meta, double closePrice, ExitReason reason)
+        {
+            double pipSize = _robot.Symbol.PipSize;
+            double profitPips = meta.Direction == TradeDirection.Buy
+                ? (closePrice - meta.EntryPrice) / pipSize
+                : (meta.EntryPrice - closePrice) / pipSize;
+
+            _analytics?.RecordTradeClose(pos.Id, closePrice, pos.NetProfit, profitPips,
+                reason, _robot.Server.TimeInUtc, meta.PushCount, meta.BreakevenMoved);
+
+            _robot.ClosePosition(pos);
         }
     }
 }
