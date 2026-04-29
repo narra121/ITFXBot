@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "MT4YLag9g+M=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\narpra1\\Documents\\cAlgo\\Sources\\Robots\\ITFXBot\\ITFXBot\\ITFXBot.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\narpra1\\.nuget\\packages\\ctrader.automate\\1.0.17\\ctrader.automate.1.0.17.nupkg.sha512"
+  ],
+  "logs": []
+}
