@@ -218,5 +218,28 @@ namespace cAlgo.Robots
             foreach (var id in staleIds)
                 _positionMetas.Remove(id);
         }
+
+        public void CheckBreakoutGuard(double barClose, double sma20, double atr, double rangeExtremeAtr)
+        {
+            double rangeTop = sma20 + rangeExtremeAtr * atr;
+            double rangeBottom = sma20 - rangeExtremeAtr * atr;
+            double winBoxDistance = _riskManager.GetWinBoxPriceDistance();
+
+            var s5Positions = _robot.Positions
+                .Where(p => p.SymbolName == _robot.SymbolName && p.Label == "ITFX_S5")
+                .ToList();
+
+            foreach (var pos in s5Positions)
+            {
+                bool breakout = barClose > rangeTop + winBoxDistance || barClose < rangeBottom - winBoxDistance;
+                if (breakout)
+                {
+                    _robot.Print("[ITFX] Breakout guard: closing S5 position {0}", pos.Id);
+                    _robot.ClosePosition(pos);
+                    if (_positionMetas.ContainsKey(pos.Id))
+                        _positionMetas.Remove(pos.Id);
+                }
+            }
+        }
     }
 }
