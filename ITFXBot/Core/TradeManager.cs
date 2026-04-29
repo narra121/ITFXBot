@@ -24,7 +24,7 @@ namespace cAlgo.Robots
         private readonly RiskManager _riskManager;
         private readonly double _breakevenBufferPips;
         private readonly int _targetPushCount;
-        private readonly Dictionary<long, PositionMeta> _positionMetas = new Dictionary<long, PositionMeta>();
+        private readonly Dictionary<int, PositionMeta> _positionMetas = new Dictionary<int, PositionMeta>();
 
         public TradeManager(Robot robot, RiskManager riskManager, double breakevenBufferPips, int targetPushCount)
         {
@@ -65,7 +65,7 @@ namespace cAlgo.Robots
 
         public void ManageOpenPositions(double barClose, double barHigh, double barLow)
         {
-            var closedIds = new List<long>();
+            var closedIds = new List<int>();
 
             foreach (var pos in _robot.Positions.Where(p => p.SymbolName == _robot.SymbolName).ToList())
             {
@@ -139,7 +139,7 @@ namespace cAlgo.Robots
                 else
                     newStop = meta.EntryPrice - bufferPrice;
 
-                _robot.ModifyPosition(pos, newStop, pos.TakeProfit);
+                _robot.ModifyPosition(pos, newStop, pos.TakeProfit, false);
                 meta.BreakevenMoved = true;
                 _robot.Print("[ITFX] Breakeven set for position {0} at {1}", pos.Id, newStop);
             }
@@ -188,13 +188,13 @@ namespace cAlgo.Robots
             {
                 newStop = meta.LastExtreme - trailDistance;
                 if (pos.StopLoss.HasValue && newStop > pos.StopLoss.Value)
-                    _robot.ModifyPosition(pos, newStop, pos.TakeProfit);
+                    _robot.ModifyPosition(pos, newStop, pos.TakeProfit, false);
             }
             else
             {
                 newStop = meta.LastExtreme + trailDistance;
                 if (pos.StopLoss.HasValue && newStop < pos.StopLoss.Value)
-                    _robot.ModifyPosition(pos, newStop, pos.TakeProfit);
+                    _robot.ModifyPosition(pos, newStop, pos.TakeProfit, false);
             }
         }
 
@@ -208,7 +208,7 @@ namespace cAlgo.Robots
 
         public void CleanupClosedPositions()
         {
-            var activeIds = new HashSet<long>(_robot.Positions.Select(p => p.Id));
+            var activeIds = new HashSet<int>(_robot.Positions.Select(p => p.Id));
             var staleIds = _positionMetas.Keys.Where(id => !activeIds.Contains(id)).ToList();
             foreach (var id in staleIds)
                 _positionMetas.Remove(id);
