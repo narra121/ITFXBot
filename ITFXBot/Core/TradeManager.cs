@@ -197,16 +197,21 @@ namespace cAlgo.Robots
 
             double newStop;
             double trailDistance = _riskManager.GetWinBoxPriceDistance();
+            double minGap = _robot.Symbol.PipSize * 10;
 
             if (meta.Direction == TradeDirection.Buy)
             {
                 newStop = meta.LastExtreme - trailDistance;
+                if (pos.TakeProfit.HasValue && newStop >= pos.TakeProfit.Value - minGap)
+                    return;
                 if (pos.StopLoss.HasValue && newStop > pos.StopLoss.Value)
                     _robot.ModifyPosition(pos, newStop, pos.TakeProfit, false);
             }
             else
             {
                 newStop = meta.LastExtreme + trailDistance;
+                if (pos.TakeProfit.HasValue && newStop <= pos.TakeProfit.Value + minGap)
+                    return;
                 if (pos.StopLoss.HasValue && newStop < pos.StopLoss.Value)
                     _robot.ModifyPosition(pos, newStop, pos.TakeProfit, false);
             }
