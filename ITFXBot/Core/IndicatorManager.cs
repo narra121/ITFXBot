@@ -35,16 +35,16 @@ namespace cAlgo.Robots
 
         public double GetSma20Slope(int lookback)
         {
-            double current = Sma20.Result.Last(0);
-            double previous = Sma20.Result.Last(lookback);
+            double current = Sma20.Result.Last(1);
+            double previous = Sma20.Result.Last(1 + lookback);
             if (previous == 0) return 0;
             return (current - previous) / previous * 100;
         }
 
         public double GetConfSma20Slope(int lookback)
         {
-            double current = ConfSma20.Result.Last(0);
-            double previous = ConfSma20.Result.Last(lookback);
+            double current = ConfSma20.Result.Last(1);
+            double previous = ConfSma20.Result.Last(1 + lookback);
             if (previous == 0) return 0;
             return (current - previous) / previous * 100;
         }
