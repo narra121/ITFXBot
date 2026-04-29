@@ -220,16 +220,46 @@ namespace cAlgo.Robots
                 p.Label.StartsWith(labelPrefix));
         }
 
+        public void HandlePositionClosed(Position pos)
+        {
+            if (!_positionMetas.ContainsKey(pos.Id)) return;
+            var meta = _positionMetas[pos.Id];
+
+            double pipSize = _robot.Symbol.PipSize;
+            double profitPips = meta.Direction == TradeDirection.Buy
+                ? (pos.EntryPrice - pos.EntryPrice + pos.Pips * pipSize) / pipSize
+                : pos.Pips;
+
+            ExitReason reason;
+            double tpDistance = _riskManager.GetTakeProfitPips() * pipSize;
+            double slDistance = _riskManager.GetEmergencyStopPips() * pipSize;
+            double closeDistance = Math.Abs(pos.EntryPrice - pos.EntryPrice);
+
+            if (pos.Pips > 0 && Math.Abs(pos.Pips - _riskManager.GetTakeProfitPips()) < 50)
+                reason = ExitReason.TakeProfit;
+            else if (pos.Pips < 0 && Math.Abs(pos.Pips + _riskManager.GetEmergencyStopPips()) < 50)
+                reason = ExitReason.EmergencyStop;
+            else if (pos.Pips > 0)
+                reason = ExitReason.TrailingStop;
+            else
+                reason = ExitReason.ServerSL;
+
+            _analytics?.RecordTradeClose(pos.Id, pos.EntryPrice + pos.Pips * pipSize,
+                pos.NetProfit, pos.Pips, reason, _robot.Server.TimeInUtc,
+                meta.PushCount, meta.BreakevenMoved);
+
+            _robot.Print("[ITFX] CLOSED {0} {1} by {2} | Pips: {3:F0} | Net: {4:F2}",
+                pos.Id, meta.StrategyLabel, reason, pos.Pips, pos.NetProfit);
+
+            _positionMetas.Remove(pos.Id);
+        }
+
         public void CleanupClosedPositions()
         {
             var activeIds = new HashSet<int>(_robot.Positions.Select(p => p.Id));
             var staleIds = _positionMetas.Keys.Where(id => !activeIds.Contains(id)).ToList();
             foreach (var id in staleIds)
-            {
-                if (_analytics != null && _analytics != null)
-                    _analytics.RecordServerClose(id, 0, 0, _robot.Server.TimeInUtc);
                 _positionMetas.Remove(id);
-            }
         }
 
         public void CloseExpiredPositions(DateTime utcNow, int maxHoldHours)

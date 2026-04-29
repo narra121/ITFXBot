@@ -145,6 +145,7 @@ namespace cAlgo.Robots
             _strategies.Add(s5);
 
             _entryBars.BarOpened += OnEntryBarOpened;
+            Positions.Closed += OnPositionClosed;
 
             Print("[ITFX] Bot started | WinBox: {0} pips | Session: {1}-{2} UTC | MaxHold: {3}h",
                 _riskManager.WinBoxPips, TradingStartHour, TradingEndHour, MaxHoldHours);
@@ -315,9 +316,19 @@ namespace cAlgo.Robots
             };
         }
 
+        private void OnPositionClosed(PositionClosedEventArgs args)
+        {
+            var pos = args.Position;
+            if (pos.SymbolName != SymbolName) return;
+            if (pos.Label == null || !pos.Label.StartsWith("ITFX_")) return;
+
+            _tradeManager.HandlePositionClosed(pos);
+        }
+
         protected override void OnStop()
         {
             _entryBars.BarOpened -= OnEntryBarOpened;
+            Positions.Closed -= OnPositionClosed;
             _analytics.PrintFullReport();
             Print("[ITFX] Bot stopped");
         }
