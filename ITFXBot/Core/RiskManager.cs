@@ -38,6 +38,11 @@ namespace cAlgo.Robots
             return WinBoxPips * _emergencyStopMultiplier;
         }
 
+        public double GetTakeProfitPips()
+        {
+            return WinBoxPips * 2.0;
+        }
+
         public double GetLifelinePrice(double entryPrice, TradeDirection direction)
         {
             double distance = GetWinBoxPriceDistance();

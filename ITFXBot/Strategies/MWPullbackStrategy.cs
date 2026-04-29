@@ -96,8 +96,17 @@ namespace cAlgo.Robots
             }
         }
 
+        private int _lcpWaitCount;
+
         private void CheckForLCP(MarketSnapshot snap)
         {
+            _lcpWaitCount++;
+            if (_lcpWaitCount > _swingLookback * 3)
+            {
+                Reset();
+                return;
+            }
+
             bool lcpConfirmed = false;
 
             if (_patternDirection == TradeDirection.Buy && snap.Close > _lcpLevel)
@@ -109,7 +118,10 @@ namespace cAlgo.Robots
             {
                 bool strongCandle = snap.CandleBody > 0.5 * snap.CandleRange;
                 if (strongCandle)
+                {
                     _state = PatternState.WaitingForM8Pullback;
+                    _staleBarCount = 0;
+                }
                 else
                     Reset();
             }
@@ -147,6 +159,7 @@ namespace cAlgo.Robots
             _patternDirection = TradeDirection.None;
             _lcpLevel = 0;
             _staleBarCount = 0;
+            _lcpWaitCount = 0;
         }
 
         private double FindSwingHigh(int centerIndex)

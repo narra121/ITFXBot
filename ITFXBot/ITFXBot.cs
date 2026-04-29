@@ -134,6 +134,9 @@ namespace cAlgo.Robots
 
         private void OnEntryBarOpened(BarOpenedEventArgs args)
         {
+            if (_entryBars.Count < 201 || _confBars.Count < 201)
+                return;
+
             _tradeManager.CleanupClosedPositions();
 
             var snap = BuildSnapshot();
@@ -204,11 +207,18 @@ namespace cAlgo.Robots
 
             var marketState = _stateDetector.Detect(sma20, sma200, atr, sma20Slope, m8High, m8Low);
 
-            bool isBullishEntry = _entryBars.ClosePrices.Last(1) > sma200 && sma20Slope > 0;
-            bool isBullishConf = _confBars.ClosePrices.Last(1) > confSma200 && confSma20Slope > 0;
+            bool entryAboveSma200 = _entryBars.ClosePrices.Last(1) > sma200;
+            bool confAboveSma200 = _confBars.ClosePrices.Last(1) > confSma200;
+            bool priceAgrees = (entryAboveSma200 && confAboveSma200) ||
+                               (!entryAboveSma200 && !confAboveSma200);
 
-            bool dualAgrees = (isBullishEntry && isBullishConf) ||
-                              (!isBullishEntry && !isBullishConf);
+            bool slopeAgrees = (sma20Slope > 0 && confSma20Slope > 0) ||
+                               (sma20Slope < 0 && confSma20Slope < 0);
+
+            bool isBullishEntry = entryAboveSma200 && sma20Slope > 0;
+            bool isBullishConf = confAboveSma200 && confSma20Slope > 0;
+
+            bool dualAgrees = priceAgrees && slopeAgrees;
 
             int s2Count = _tradeManager.GetPositionCountByLabel("ITFX_S2");
 

@@ -39,7 +39,9 @@ namespace cAlgo.Robots
             var tradeType = signal.Direction == TradeDirection.Buy ? TradeType.Buy : TradeType.Sell;
             double emergencyStopPips = _riskManager.GetEmergencyStopPips();
 
-            var result = _robot.ExecuteMarketOrder(tradeType, _robot.SymbolName, volume, signal.Label, emergencyStopPips, null);
+            double takeProfitPips = _riskManager.GetTakeProfitPips();
+
+            var result = _robot.ExecuteMarketOrder(tradeType, _robot.SymbolName, volume, signal.Label, emergencyStopPips, takeProfitPips);
 
             if (result.IsSuccessful)
             {
@@ -65,7 +67,7 @@ namespace cAlgo.Robots
         {
             var closedIds = new List<long>();
 
-            foreach (var pos in _robot.Positions.Where(p => p.SymbolName == _robot.SymbolName))
+            foreach (var pos in _robot.Positions.Where(p => p.SymbolName == _robot.SymbolName).ToList())
             {
                 if (!_positionMetas.ContainsKey(pos.Id))
                     continue;
@@ -120,10 +122,11 @@ namespace cAlgo.Robots
         {
             if (meta.BreakevenMoved) return;
 
+            double winBoxDistance = _riskManager.GetWinBoxPriceDistance();
             bool newExtreme = false;
-            if (meta.Direction == TradeDirection.Buy && barHigh > meta.EntryPrice)
+            if (meta.Direction == TradeDirection.Buy && barHigh > meta.EntryPrice + winBoxDistance)
                 newExtreme = true;
-            else if (meta.Direction == TradeDirection.Sell && barLow < meta.EntryPrice)
+            else if (meta.Direction == TradeDirection.Sell && barLow < meta.EntryPrice - winBoxDistance)
                 newExtreme = true;
 
             if (newExtreme)
@@ -151,15 +154,11 @@ namespace cAlgo.Robots
                     meta.LastExtreme = barHigh;
                     meta.InPullback = false;
                 }
-                else if (barLow < meta.LastExtreme && !meta.InPullback)
+                else if (!meta.InPullback && barLow < meta.LastExtreme)
                 {
                     meta.PushCount++;
                     meta.InPullback = true;
                     _robot.Print("[ITFX] Push #{0} detected for position {1}", meta.PushCount, pos.Id);
-                }
-                else if (barHigh > meta.LastExtreme)
-                {
-                    meta.InPullback = false;
                 }
             }
             else
@@ -169,15 +168,11 @@ namespace cAlgo.Robots
                     meta.LastExtreme = barLow;
                     meta.InPullback = false;
                 }
-                else if (barHigh > meta.LastExtreme && !meta.InPullback)
+                else if (!meta.InPullback && barHigh > meta.LastExtreme)
                 {
                     meta.PushCount++;
                     meta.InPullback = true;
                     _robot.Print("[ITFX] Push #{0} detected for position {1}", meta.PushCount, pos.Id);
-                }
-                else if (barLow < meta.LastExtreme)
-                {
-                    meta.InPullback = false;
                 }
             }
         }

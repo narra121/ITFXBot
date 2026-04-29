@@ -17,6 +17,9 @@ namespace cAlgo.Robots
 
         public MarketStateType Detect(double sma20, double sma200, double atr, double sma20Slope, double m8High, double m8Low)
         {
+            if (atr <= 0)
+                return MarketStateType.Ranging;
+
             double distance = Math.Abs(sma20 - sma200);
 
             if (distance < _narrowMultiplier * atr)
