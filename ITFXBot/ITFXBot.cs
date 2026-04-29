@@ -28,7 +28,7 @@ namespace cAlgo.Robots
         [Parameter("Narrow Multiplier", Group = "Market State", DefaultValue = 1.0)]
         public double NarrowMultiplier { get; set; }
 
-        [Parameter("Wide Multiplier", Group = "Market State", DefaultValue = 3.0)]
+        [Parameter("Wide Multiplier", Group = "Market State", DefaultValue = 2.0)]
         public double WideMultiplier { get; set; }
 
         [Parameter("Enable 20 Touch", Group = "Strategies", DefaultValue = true)]
@@ -88,6 +88,21 @@ namespace cAlgo.Robots
         [Parameter("Power Move ATR", Group = "Strategy Settings", DefaultValue = 2.0)]
         public double PowerMoveATR { get; set; }
 
+        [Parameter("Trading Start Hour (UTC)", Group = "Session", DefaultValue = 1)]
+        public int TradingStartHour { get; set; }
+
+        [Parameter("Trading End Hour (UTC)", Group = "Session", DefaultValue = 21)]
+        public int TradingEndHour { get; set; }
+
+        [Parameter("Close Before Weekend", Group = "Session", DefaultValue = true)]
+        public bool CloseBeforeWeekend { get; set; }
+
+        [Parameter("Friday Close Hour (UTC)", Group = "Session", DefaultValue = 20)]
+        public int FridayCloseHour { get; set; }
+
+        [Parameter("Max Hold Hours (0=unlimited)", Group = "Session", DefaultValue = 24, MinValue = 0)]
+        public int MaxHoldHours { get; set; }
+
         private IndicatorManager _indicators;
         private MarketStateDetector _stateDetector;
         private RiskManager _riskManager;
@@ -132,6 +147,23 @@ namespace cAlgo.Robots
                 string.Join(", ", _strategies.Where(s => s.IsEnabled).Select(s => s.Name)));
         }
 
+        private bool IsWithinTradingSession()
+        {
+            int hour = Server.TimeInUtc.Hour;
+            int dow = (int)Server.TimeInUtc.DayOfWeek;
+
+            if (dow == 0 || dow == 6)
+                return false;
+
+            if (CloseBeforeWeekend && dow == 5 && hour >= FridayCloseHour)
+                return false;
+
+            if (TradingStartHour < TradingEndHour)
+                return hour >= TradingStartHour && hour < TradingEndHour;
+
+            return hour >= TradingStartHour || hour < TradingEndHour;
+        }
+
         private void OnEntryBarOpened(BarOpenedEventArgs args)
         {
             if (_entryBars.Count < 201 || _confBars.Count < 201)
@@ -146,10 +178,24 @@ namespace cAlgo.Robots
 
             _tradeManager.ManageOpenPositions(snap.PreviousClose, snap.PreviousHigh, snap.PreviousLow);
 
+            if (MaxHoldHours > 0)
+                _tradeManager.CloseExpiredPositions(Server.TimeInUtc, MaxHoldHours);
+
+            if (CloseBeforeWeekend)
+            {
+                int dow = (int)Server.TimeInUtc.DayOfWeek;
+                int hour = Server.TimeInUtc.Hour;
+                if (dow == 5 && hour >= FridayCloseHour)
+                    _tradeManager.CloseAllPositions();
+            }
+
             if (EnableBackToM8s)
             {
                 _tradeManager.CheckBreakoutGuard(snap.PreviousClose, snap.Sma20, snap.Atr, RangeExtremeATR);
             }
+
+            if (!IsWithinTradingSession())
+                return;
 
             bool enteredThisBar = false;
 

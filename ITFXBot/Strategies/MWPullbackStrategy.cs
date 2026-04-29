@@ -20,6 +20,7 @@ namespace cAlgo.Robots
         private TradeDirection _patternDirection = TradeDirection.None;
         private double _lcpLevel;
         private int _staleBarCount;
+        private int _lcpWaitCount;
 
         public MWPullbackStrategy(int swingLookback, double patternTolerance)
         {
@@ -32,7 +33,7 @@ namespace cAlgo.Robots
             UpdatePriceHistory(snap);
 
             if (_state == PatternState.Scanning)
-                ScanForPattern(snap);
+                ScanForPattern();
 
             if (_state == PatternState.WaitingForLCP)
                 CheckForLCP(snap);
@@ -48,7 +49,7 @@ namespace cAlgo.Robots
             _recentHighs.Add(snap.High);
             _recentLows.Add(snap.Low);
 
-            int maxHistory = _swingLookback * 10;
+            int maxHistory = _swingLookback * 20;
             if (_recentHighs.Count > maxHistory)
             {
                 _recentHighs.RemoveAt(0);
@@ -56,47 +57,51 @@ namespace cAlgo.Robots
             }
         }
 
-        private void ScanForPattern(MarketSnapshot snap)
+        private void ScanForPattern()
         {
-            if (_recentHighs.Count < _swingLookback * 3)
-                return;
+            var swingHighs = FindAllSwingHighs();
+            var swingLows = FindAllSwingLows();
 
-            int count = _recentHighs.Count;
-
-            double peak1 = FindSwingHigh(count - _swingLookback * 3);
-            double valley = FindSwingLow(count - _swingLookback * 2);
-            double peak2 = FindSwingHigh(count - _swingLookback);
-
-            if (peak1 > 0 && peak2 > 0 && valley > 0)
+            if (swingHighs.Count >= 2 && swingLows.Count >= 1)
             {
-                double tolerance = peak1 * _patternTolerance / 100.0;
-                if (Math.Abs(peak1 - peak2) < tolerance && valley < peak1 && valley < peak2)
+                var p2 = swingHighs[swingHighs.Count - 1];
+                var p1 = swingHighs[swingHighs.Count - 2];
+                double valley = FindLowestBetween(p1.Index, p2.Index);
+
+                if (valley > 0)
                 {
-                    _state = PatternState.WaitingForLCP;
-                    _patternDirection = TradeDirection.Sell;
-                    _lcpLevel = valley;
-                    return;
+                    double tolerance = p1.Value * _patternTolerance / 100.0;
+                    if (Math.Abs(p1.Value - p2.Value) < tolerance && valley < p1.Value && valley < p2.Value)
+                    {
+                        _state = PatternState.WaitingForLCP;
+                        _patternDirection = TradeDirection.Sell;
+                        _lcpLevel = valley;
+                        _lcpWaitCount = 0;
+                        return;
+                    }
                 }
             }
 
-            double trough1 = FindSwingLow(count - _swingLookback * 3);
-            double peak = FindSwingHigh(count - _swingLookback * 2);
-            double trough2 = FindSwingLow(count - _swingLookback);
-
-            if (trough1 > 0 && trough2 > 0 && peak > 0)
+            if (swingLows.Count >= 2 && swingHighs.Count >= 1)
             {
-                double tolerance = trough1 * _patternTolerance / 100.0;
-                if (Math.Abs(trough1 - trough2) < tolerance && peak > trough1 && peak > trough2)
+                var t2 = swingLows[swingLows.Count - 1];
+                var t1 = swingLows[swingLows.Count - 2];
+                double peak = FindHighestBetween(t1.Index, t2.Index);
+
+                if (peak > 0)
                 {
-                    _state = PatternState.WaitingForLCP;
-                    _patternDirection = TradeDirection.Buy;
-                    _lcpLevel = peak;
-                    return;
+                    double tolerance = t1.Value * _patternTolerance / 100.0;
+                    if (Math.Abs(t1.Value - t2.Value) < tolerance && peak > t1.Value && peak > t2.Value)
+                    {
+                        _state = PatternState.WaitingForLCP;
+                        _patternDirection = TradeDirection.Buy;
+                        _lcpLevel = peak;
+                        _lcpWaitCount = 0;
+                        return;
+                    }
                 }
             }
         }
-
-        private int _lcpWaitCount;
 
         private void CheckForLCP(MarketSnapshot snap)
         {
@@ -108,7 +113,6 @@ namespace cAlgo.Robots
             }
 
             bool lcpConfirmed = false;
-
             if (_patternDirection == TradeDirection.Buy && snap.Close > _lcpLevel)
                 lcpConfirmed = true;
             else if (_patternDirection == TradeDirection.Sell && snap.Close < _lcpLevel)
@@ -162,32 +166,68 @@ namespace cAlgo.Robots
             _lcpWaitCount = 0;
         }
 
-        private double FindSwingHigh(int centerIndex)
+        private struct SwingPoint
         {
-            if (centerIndex < _swingLookback || centerIndex >= _recentHighs.Count - _swingLookback)
-                return -1;
-
-            double center = _recentHighs[centerIndex];
-            for (int i = centerIndex - _swingLookback; i <= centerIndex + _swingLookback; i++)
-            {
-                if (i == centerIndex) continue;
-                if (_recentHighs[i] >= center) return -1;
-            }
-            return center;
+            public int Index;
+            public double Value;
         }
 
-        private double FindSwingLow(int centerIndex)
+        private List<SwingPoint> FindAllSwingHighs()
         {
-            if (centerIndex < _swingLookback || centerIndex >= _recentLows.Count - _swingLookback)
-                return -1;
-
-            double center = _recentLows[centerIndex];
-            for (int i = centerIndex - _swingLookback; i <= centerIndex + _swingLookback; i++)
+            var result = new List<SwingPoint>();
+            int count = _recentHighs.Count;
+            for (int i = _swingLookback; i < count - _swingLookback; i++)
             {
-                if (i == centerIndex) continue;
-                if (_recentLows[i] <= center) return -1;
+                double center = _recentHighs[i];
+                bool isSwing = true;
+                for (int j = i - _swingLookback; j <= i + _swingLookback; j++)
+                {
+                    if (j == i) continue;
+                    if (_recentHighs[j] >= center) { isSwing = false; break; }
+                }
+                if (isSwing)
+                    result.Add(new SwingPoint { Index = i, Value = center });
             }
-            return center;
+            return result;
+        }
+
+        private List<SwingPoint> FindAllSwingLows()
+        {
+            var result = new List<SwingPoint>();
+            int count = _recentLows.Count;
+            for (int i = _swingLookback; i < count - _swingLookback; i++)
+            {
+                double center = _recentLows[i];
+                bool isSwing = true;
+                for (int j = i - _swingLookback; j <= i + _swingLookback; j++)
+                {
+                    if (j == i) continue;
+                    if (_recentLows[j] <= center) { isSwing = false; break; }
+                }
+                if (isSwing)
+                    result.Add(new SwingPoint { Index = i, Value = center });
+            }
+            return result;
+        }
+
+        private double FindLowestBetween(int startIdx, int endIdx)
+        {
+            if (startIdx >= endIdx || startIdx < 0 || endIdx >= _recentLows.Count)
+                return -1;
+            double lowest = double.MaxValue;
+            for (int i = startIdx; i <= endIdx; i++)
+                lowest = Math.Min(lowest, _recentLows[i]);
+            return lowest < double.MaxValue ? lowest : -1;
+        }
+
+        private double FindHighestBetween(int startIdx, int endIdx)
+        {
+            if (startIdx >= endIdx || startIdx < 0 || endIdx >= _recentHighs.Count)
+                return -1;
+            double highest = double.MinValue;
+            for (int i = startIdx; i <= endIdx; i++)
+                highest = Math.Max(highest, _recentHighs[i]);
+            return highest > double.MinValue ? highest : -1;
         }
     }
 }

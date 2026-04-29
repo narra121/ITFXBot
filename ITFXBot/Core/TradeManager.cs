@@ -85,10 +85,16 @@ namespace cAlgo.Robots
 
                 if (meta.PushCount >= _targetPushCount)
                 {
-                    _robot.Print("[ITFX] Closing {0} after {1} pushes", pos.Id, meta.PushCount);
-                    _robot.ClosePosition(pos);
-                    closedIds.Add(pos.Id);
-                    continue;
+                    double profitPips = meta.Direction == TradeDirection.Buy
+                        ? (barClose - meta.EntryPrice) / _robot.Symbol.PipSize
+                        : (meta.EntryPrice - barClose) / _robot.Symbol.PipSize;
+                    if (profitPips >= _riskManager.WinBoxPips)
+                    {
+                        _robot.Print("[ITFX] Closing {0} after {1} pushes at {2:F0} pips profit", pos.Id, meta.PushCount, profitPips);
+                        _robot.ClosePosition(pos);
+                        closedIds.Add(pos.Id);
+                        continue;
+                    }
                 }
 
                 TrailStop(pos, meta, barHigh, barLow);
@@ -212,6 +218,29 @@ namespace cAlgo.Robots
             var staleIds = _positionMetas.Keys.Where(id => !activeIds.Contains(id)).ToList();
             foreach (var id in staleIds)
                 _positionMetas.Remove(id);
+        }
+
+        public void CloseExpiredPositions(DateTime utcNow, int maxHoldHours)
+        {
+            foreach (var pos in _robot.Positions.Where(p => p.SymbolName == _robot.SymbolName).ToList())
+            {
+                if ((utcNow - pos.EntryTime).TotalHours >= maxHoldHours)
+                {
+                    _robot.Print("[ITFX] Closing {0} — exceeded max hold of {1}h", pos.Id, maxHoldHours);
+                    _robot.ClosePosition(pos);
+                    _positionMetas.Remove(pos.Id);
+                }
+            }
+        }
+
+        public void CloseAllPositions()
+        {
+            foreach (var pos in _robot.Positions.Where(p => p.SymbolName == _robot.SymbolName).ToList())
+            {
+                _robot.Print("[ITFX] Weekend close: closing position {0}", pos.Id);
+                _robot.ClosePosition(pos);
+                _positionMetas.Remove(pos.Id);
+            }
         }
 
         public void CheckBreakoutGuard(double barClose, double sma20, double atr, double rangeExtremeAtr)
